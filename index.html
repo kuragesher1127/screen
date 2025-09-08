@@ -1,0 +1,462 @@
+{\rtf1\ansi\ansicpg936\cocoartf2761
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 <!DOCTYPE html>\
+<html lang="ja">\
+<head>\
+    <meta charset="UTF-8">\
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">\
+    <title>Interactive Camera Art Generator</title>\
+    <script src="https://cdn.bootcdn.net/ajax/libs/p5.js/1.9.0/p5.min.js"></script>\
+    <style>\
+        body, html \{ \
+            margin: 0; \
+            padding: 0; \
+            overflow: hidden; \
+            background: #fff;\
+            font-family: Arial, sans-serif;\
+        \}\
+        canvas \{ \
+            display: block; \
+        \}\
+        #loading \{\
+            position: fixed;\
+            top: 0;\
+            left: 0;\
+            width: 100%;\
+            height: 100%;\
+            background: rgba(255, 255, 255, 0.9);\
+            display: flex;\
+            justify-content: center;\
+            align-items: center;\
+            z-index: 100;\
+            flex-direction: column;\
+        \}\
+        .spinner \{\
+            width: 50px;\
+            height: 50px;\
+            border: 5px solid #f3f3f3;\
+            border-top: 5px solid #FF009E;\
+            border-radius: 50%;\
+            animation: spin 1s linear infinite;\
+            margin-bottom: 20px;\
+        \}\
+        @keyframes spin \{\
+            0% \{ transform: rotate(0deg); \}\
+            100% \{ transform: rotate(360deg); \}\
+        \}\
+        #instructions \{\
+            position: fixed;\
+            bottom: 20px;\
+            left: 0;\
+            width: 100%;\
+            text-align: center;\
+            color: #666;\
+            font-size: 14px;\
+            pointer-events: none;\
+        \}\
+    </style>\
+</head>\
+<body>\
+    <div id="loading">\
+        <div class="spinner"></div>\
+        <div>\uc0\u12459 \u12513 \u12521 \u12408 \u12398 \u12450 \u12463 \u12475 \u12473 \u12434 \u35377 \u21487 \u12375 \u12390 \u12367 \u12384 \u12373 \u12356 </div>\
+    </div>\
+    <div id="instructions">\uc0\u12479 \u12483 \u12503 \u12414 \u12383 \u12399 \u12463 \u12522 \u12483 \u12463 \u12375 \u12390 \u38283 \u22987 </div>\
+\
+    <script>\
+        // ===== \uc0\u36923 \u36753 \u30011 \u24067  =====\
+        let baseW = 900, baseH = 1600;\
+\
+        // ===== \uc0\u21442 \u25968  =====\
+        let sampleSize = 4; // \uc0\u32593 \u26684 \u37319 \u26679 \u27493 \u38271 \
+        let threshold = 300; // \uc0\u24863 \u24230 \u38408 \u20540 \
+        const pink = "#FF009E", purple = "#C05EA9", blue = "#B4E1E5";\
+        let currentColor = pink;\
+\
+        // \uc0\u25668 \u20687 \u22836 \
+        const VIDEO_W = 240, VIDEO_H = 180;\
+        let video, started = false, cameraReady = false;\
+\
+        // \uc0\u23454 \u26102 \u26263 \u21306 \u28857 \
+        let livePoints = [];\
+        let frameCounter = 0;\
+        const DETECT_EVERY = 6;\
+\
+        // \uc0\u20923 \u32467 \u23618 \
+        let freezeLayers = [];\
+\
+        // \uc0\u20498 \u35745 \u26102 \
+        let isFreezing = false, freezeStart = 0, freezeDuration = 1000;\
+\
+        // UI\
+        const ui = \{\
+            yTop: 140, dCircle: 80, rectH: 80, gap: 28, hitPad: 18,\
+            sensY: baseH - 140, sensR: 28, sensLinePad: 150,\
+        \};\
+        const UI = \{\};\
+        \
+        function layoutUI() \{\
+            let x = 40;\
+            UI.pink = \{ x, y: ui.yTop, w: ui.dCircle, h: ui.dCircle \};\
+            x += ui.dCircle + ui.gap;\
+            UI.purple = \{ x, y: ui.yTop, w: ui.dCircle, h: ui.dCircle \};\
+            x += ui.dCircle + ui.gap;\
+            UI.blue = \{ x, y: ui.yTop, w: ui.dCircle, h: ui.dCircle \};\
+            x += ui.dCircle + ui.gap;\
+            UI.clear = \{ x, y: ui.yTop, w: 180, h: ui.rectH, label: "\uc0\u12463 \u12522 \u12450 " \};\
+            x += 180 + ui.gap;\
+            UI.poster = \{ x, y: ui.yTop, w: 280, h: ui.rectH, label: "\uc0\u12509 \u12473 \u12479 \u12540 \u29983 \u25104 " \};\
+            UI.sens = \{ x1: ui.sensLinePad, x2: baseW - ui.sensLinePad, y: ui.sensY, r: ui.sensR \};\
+        \}\
+        layoutUI();\
+\
+        // \uc0\u22352 \u26631 \u25442 \u31639 \u65306 \u23631 \u24149  \u8594  \u22522 \u20934 \
+        function screenToBase(px, py) \{\
+            const fit = Math.min(windowWidth / baseW, windowHeight / baseH);\
+            const offX = (windowWidth - baseW * fit) / 2;\
+            const offY = (windowHeight - baseH * fit) / 2;\
+            return \{ x: (px - offX) / fit, y: (py - offY) / fit \};\
+        \}\
+\
+        function setup() \{\
+            createCanvas(windowWidth, windowHeight);\
+            pixelDensity(1);\
+            textSize(30);\
+            textAlign(CENTER, CENTER);\
+        \}\
+        \
+        function windowResized() \{ \
+            resizeCanvas(windowWidth, windowHeight); \
+        \}\
+\
+        // iOS \uc0\u38656 \u35201 \u25163 \u21183 \u21551 \u21160 \u25668 \u20687 \u22836 \
+        function startCamera() \{\
+            if (started) return;\
+            started = true;\
+            const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent);\
+            const constraints = \{\
+                video: \{\
+                    facingMode: isiOS ? "environment" : \{ exact: "environment" \},\
+                    width: \{ ideal: VIDEO_W \}, height: \{ ideal: VIDEO_H \},\
+                \},\
+                audio: false,\
+            \};\
+            \
+            video = createCapture(constraints, () => \{\
+                if (!video || !video.elt || !video.elt.srcObject) \{\
+                    video = createCapture(\{ video: true, audio: false \});\
+                \}\
+                video.size(VIDEO_W, VIDEO_H);\
+                video.hide();\
+                if (video.elt && video.elt.play) \{\
+                    video.elt.play().then(() => \{\
+                        cameraReady = true;\
+                        document.getElementById('loading').style.display = 'none';\
+                    \}).catch((err) => \{\
+                        console.error("Camera error: ", err);\
+                        alert("\uc0\u12459 \u12513 \u12521 \u12408 \u12398 \u12450 \u12463 \u12475 \u12473 \u12395 \u22833 \u25943 \u12375 \u12414 \u12375 \u12383 \u12290 \u12502 \u12521 \u12454 \u12470 \u12398 \u35373 \u23450 \u12434 \u30906 \u35469 \u12375 \u12390 \u12367 \u12384 \u12373 \u12356 \u12290 ");\
+                    \});\
+                \}\
+            \});\
+            \
+            video.elt.addEventListener('error', () => \{\
+                alert("\uc0\u12459 \u12513 \u12521 \u12408 \u12398 \u12450 \u12463 \u12475 \u12473 \u12395 \u22833 \u25943 \u12375 \u12414 \u12375 \u12383 \u12290 \u12502 \u12521 \u12454 \u12470 \u12398 \u35373 \u23450 \u12434 \u30906 \u35469 \u12375 \u12390 \u12367 \u12384 \u12373 \u12356 \u12290 ");\
+            \});\
+        \}\
+\
+        function draw() \{\
+            background(255);\
+            const fit = Math.min(width / baseW, height / baseH);\
+            const offX = (width - baseW * fit) / 2, offY = (height - baseH * fit) / 2;\
+            push(); \
+            translate(offX, offY); \
+            scale(fit);\
+\
+            if (!started || !cameraReady) \{\
+                noStroke(); \
+                fill(245); \
+                rect(0, 0, baseW, baseH);\
+                fill(0); \
+                textAlign(CENTER, CENTER); \
+                textSize(36);\
+                text("\uc0\u12479 \u12483 \u12503 \u12375 \u12390 \u38283 \u22987 ", baseW/2, baseH/2);\
+                pop(); \
+                return;\
+            \}\
+\
+            drawReactiveDots();\
+            drawFrozenLayers();\
+            drawTopButtons();\
+            drawSensitivity();\
+            handleFreeze();\
+\
+            pop();\
+        \}\
+\
+        /* ===== \uc0\u23454 \u26102 \u28857 \u38453  ===== */\
+        function drawReactiveDots() \{\
+            if (!video) return;\
+            if (frameCounter % DETECT_EVERY === 0) \{\
+                livePoints.length = 0;\
+                video.loadPixels();\
+                if (video.pixels && video.pixels.length) \{\
+                    const sx = video.width / baseW;\
+                    const sy = video.height / baseH;\
+                    for (let y = 0; y < baseH; y += sampleSize) \{\
+                        const cy = (y * sy) | 0;\
+                        for (let x = 0; x < baseW; x += sampleSize) \{\
+                            const cx = (x * sx) | 0;\
+                            const i = (cy * video.width + cx) * 4;\
+                            const s = video.pixels[i] + video.pixels[i+1] + video.pixels[i+2];\
+                            if (s < threshold) livePoints.push(x, y);\
+                        \}\
+                    \}\
+                \}\
+            \}\
+            frameCounter++;\
+            noStroke(); \
+            fill(currentColor);\
+            const d = sampleSize * 0.8;\
+            for(let i = 0; i < livePoints.length; i += 2) \{\
+                ellipse(livePoints[i], livePoints[i+1], d, d);\
+            \}\
+        \}\
+\
+        function drawFrozenLayers() \{\
+            const d = sampleSize * 0.8;\
+            for(const layer of freezeLayers) \{\
+                fill(layer.color); \
+                noStroke();\
+                const pts = layer.points;\
+                for(let i = 0; i < pts.length; i += 2) \{\
+                    ellipse(pts[i], pts[i+1], d, d);\
+                \}\
+            \}\
+        \}\
+\
+        /* ===== UI ===== */\
+        function drawTopButtons() \{\
+            drawCircle(UI.pink, pink);\
+            drawCircle(UI.purple, purple);\
+            drawCircle(UI.blue, blue);\
+            drawRect(UI.clear, "\uc0\u12463 \u12522 \u12450 ", "#BCBCBC", "#000");\
+            drawRect(UI.poster, "\uc0\u12509 \u12473 \u12479 \u12540 \u29983 \u25104 ", "#000", "#FFF");\
+        \}\
+        \
+        function drawCircle(btn, col) \{\
+            noStroke(); \
+            fill(col);\
+            ellipse(btn.x + btn.w/2, btn.y + btn.h/2, btn.w, btn.h);\
+        \}\
+        \
+        function drawRect(btn, label, bg, fg) \{\
+            noStroke(); \
+            fill(bg);\
+            rect(btn.x, btn.y, btn.w, btn.h, 12);\
+            fill(fg); \
+            textAlign(CENTER, CENTER); \
+            textSize(30);\
+            text(label, btn.x + btn.w/2, btn.y + btn.h/2);\
+        \}\
+        \
+        function drawSensitivity() \{\
+            const s = UI.sens;\
+            stroke(100); \
+            strokeWeight(5); \
+            noFill();\
+            line(s.x1, s.y, s.x2, s.y);\
+            const dotX = map(threshold, 0, 765, s.x1, s.x2, true);\
+            noStroke(); \
+            fill(50);\
+            ellipse(dotX, s.y, s.r*2, s.r*2);\
+            fill(50); \
+            textAlign(CENTER, BOTTOM); \
+            textSize(26);\
+            text("\uc0\u24863 \u24230 : " + int(threshold), baseW/2, s.y - 20);\
+        \}\
+\
+        /* ===== \uc0\u20498 \u35745 \u26102  ===== */\
+        function handleFreeze() \{\
+            if (!isFreezing) return;\
+            let remain = freezeDuration - (millis() - freezeStart);\
+            fill(0, 180); \
+            ellipse(baseW/2, baseH/2, 180, 180);\
+            fill(255); \
+            textAlign(CENTER, CENTER); \
+            textSize(68);\
+            text(Math.max(0, Math.ceil(remain/1000)), baseW/2, baseH/2);\
+            if (remain <= 0) \{ \
+                captureCurrentFrame(); \
+                isFreezing = false; \
+            \}\
+        \}\
+\
+        /* ===== \uc0\u21629 \u20013 \u26816 \u27979  ===== */\
+        function hitRect(btn, p) \{\
+            const pad = ui.hitPad;\
+            return (p.x >= btn.x - pad && p.x <= btn.x + btn.w + pad &&\
+                    p.y >= btn.y - pad && p.y <= btn.y + btn.h + pad);\
+        \}\
+        \
+        function hitCircle(btn, p) \{\
+            const cx = btn.x + btn.w/2, \
+                  cy = btn.y + btn.h/2,\
+                  r = Math.min(btn.w, btn.h)/2 + ui.hitPad;\
+            return dist(p.x, p.y, cx, cy) <= r;\
+        \}\
+\
+        /* ===== \uc0\u20132 \u20114  ===== */\
+        let draggingSensitivity = false;\
+        \
+        function handlePress(px, py) \{\
+            if(!started) \{ \
+                startCamera(); \
+                document.getElementById('instructions').style.display = 'none';\
+                return true; \
+            \}\
+            const p = screenToBase(px, py);\
+            if(hitCircle(UI.pink, p)) \{ \
+                currentColor = pink; \
+                startFreeze(); \
+                return true; \
+            \}\
+            if(hitCircle(UI.purple, p)) \{ \
+                currentColor = purple; \
+                startFreeze(); \
+                return true; \
+            \}\
+            if(hitCircle(UI.blue, p)) \{ \
+                currentColor = blue; \
+                startFreeze(); \
+                return true; \
+            \}\
+            if(hitRect(UI.clear, p)) \{ \
+                freezeLayers = []; \
+                return true; \
+            \}\
+            if(hitRect(UI.poster, p)) \{ \
+                generatePosterHighRes(3); \
+                return true; \
+            \}\
+            const s = UI.sens;\
+            if(p.y > s.y - s.r*2 && p.y < s.y + s.r*2 && p.x >= s.x1 && p.x <= s.x2) \{\
+                threshold = int(map(p.x, s.x1, s.x2, 0, 765)); \
+                draggingSensitivity = true; \
+                return true;\
+            \}\
+            const dotX = map(threshold, 0, 765, s.x1, s.x2, true);\
+            if(dist(p.x, p.y, dotX, s.y) <= s.r*1.5) \{ \
+                draggingSensitivity = true; \
+                return true; \
+            \}\
+            return false;\
+        \}\
+        \
+        function handleDrag(px, py) \{\
+            if(!draggingSensitivity) return false;\
+            const s = UI.sens, p = screenToBase(px, py);\
+            threshold = int(constrain(map(p.x, s.x1, s.x2, 0, 765), 0, 765)); \
+            return true;\
+        \}\
+        \
+        function handleRelease() \{ \
+            draggingSensitivity = false; \
+            return true; \
+        \}\
+\
+        function mousePressed() \{ \
+            return handlePress(mouseX, mouseY); \
+        \}\
+        \
+        function mouseDragged() \{ \
+            return handleDrag(mouseX, mouseY); \
+        \}\
+        \
+        function mouseReleased() \{ \
+            return handleRelease(); \
+        \}\
+        \
+        function touchStarted() \{ \
+            const t = touches[0]; \
+            if(t) return handlePress(t.x, t.y); \
+            return false; \
+        \}\
+        \
+        function touchMoved() \{ \
+            const t = touches[0]; \
+            if(t) return handleDrag(t.x, t.y); \
+            return false; \
+        \}\
+        \
+        function touchEnded() \{ \
+            return handleRelease(); \
+        \}\
+\
+        /* ===== \uc0\u36923 \u36753  ===== */\
+        function startFreeze() \{ \
+            if(!isFreezing) \{ \
+                isFreezing = true; \
+                freezeStart = millis(); \
+            \} \
+        \}\
+        \
+        function captureCurrentFrame() \{\
+            freezeLayers.push(\{ color: currentColor, points: livePoints.slice() \});\
+        \}\
+\
+        /* ===== \uc0\u23548 \u20986  ===== */\
+        function downloadBlobPNG(canvas, filename) \{\
+            const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent);\
+            if(canvas.toBlob) \{\
+                canvas.toBlob(function(blob) \{\
+                    if(isiOS) \{\
+                        const r = new FileReader();\
+                        r.onloadend = function() \{\
+                            const w = window.open("");\
+                            if(w) w.document.write('<img src="' + r.result + '" style="width:100%;height:auto;"/>');\
+                        \};\
+                        r.readAsDataURL(blob);\
+                    \} else \{\
+                        const url = URL.createObjectURL(blob);\
+                        const a = document.createElement("a");\
+                        a.href = url; \
+                        a.download = filename;\
+                        document.body.appendChild(a); \
+                        a.click();\
+                        requestAnimationFrame(() => \{ \
+                            URL.revokeObjectURL(url); \
+                            a.remove(); \
+                        \});\
+                    \}\
+                \}, "image/png");\
+            \} else \{\
+                const dataURL = canvas.toDataURL("image/png");\
+                const a = document.createElement("a");\
+                a.href = dataURL; \
+                a.download = filename; \
+                a.click();\
+            \}\
+        \}\
+        \
+        function generatePosterHighRes(scale = 3) \{\
+            const pg = createGraphics(baseW * scale, baseH * scale);\
+            const d = sampleSize * 0.8 * scale;\
+            pg.noStroke();\
+            for(const layer of freezeLayers) \{\
+                pg.fill(layer.color);\
+                const pts = layer.points;\
+                for(let i = 0; i < pts.length; i += 2) \{\
+                    pg.ellipse(pts[i] * scale, pts[i+1] * scale, d, d);\
+                \}\
+            \}\
+            downloadBlobPNG(pg.canvas, `\uc0\u12509 \u12473 \u12479 \u12540 _$\{baseW*scale\}x$\{baseH*scale\}.png`);\
+            pg.remove();\
+        \}\
+    </script>\
+</body>\
+</html>}
